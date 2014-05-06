@@ -8,20 +8,22 @@ import qualified Data.Map as M
 data Instr    = Self | Literal Value | Send Selector | SelfSend Selector | SuperSend | Delegate | NonLocalReturn | IdxExtension
 data LitVal   = IntLit Int | StringLit String
 data Selector = Selector String
-data Value    = SelfV | Method ObjData | Lit LitVal | SendValue | Index Int
+data Value    = SelfV | Object ObjectImpl | Lit LitVal | SendValue | Index Int
 
-data ObjData = ObjData {
-    mName   :: String,
-    numArgs :: Int,
-    vmt     :: VMT 
+data ObjectImpl = ObjectImpl {
+    mName      :: String,
+    numArgs    :: Int,
+    vmt        :: VMT 
 }
 
 -- Virtual Method Table (Execution Stack)
 type VMT = M.Map Selector (Maybe Value)
 
 -- Operand Stack
-type InterpState   = [Value]
+data InterpState   = InterpState [Value] ObjectImpl
+--type InterpState   = [Value]
 type Interpreter a = State InterpState a
+-- go to inter state
 
 instance Eq Selector where
     (Selector s1) == (Selector s2) = s1 == s2
@@ -31,22 +33,26 @@ instance Ord Selector where
 
 top :: Interpreter (Maybe Value)
 top = do
-  stack <- get
-  case stack of
-    [] -> return Nothing
-    (top:_) -> return $ Just top
+  InterpState stack objImpl <- get
+  let result = case stack of
+        [] -> Nothing
+        (top:_) -> Just top
+  return result
 
-pop :: Interpreter (Maybe InterpState)
+pop :: Interpreter (Maybe Value)
 pop = do
-    stack <- get
-    case stack of
-        [] -> return Nothing
-        (_:xs) -> return $ Just xs
+    InterpState stack objImpl <- get
+    let (result, tail) = case stack of
+            [] -> (Nothing, [])
+            (x:xs) -> (Just x, xs)
+    put $ InterpState tail objImpl
+    return result
 
 push :: Value -> Interpreter ()
 push v = do
-    stack <- get
-    put (v:stack)
+    InterpState stack objImpl <- get
+    put $ InterpState (v:stack) objImpl
+    -- stack %= (v:)
 
 selectorTable :: M.Map Selector (Maybe Value) -> Selector -> Maybe Value
 selectorTable m s = fromMaybe (error "Method doesn\'t exist") $ M.lookup s m
@@ -63,33 +69,29 @@ handleLiteral v = push v
 handleSend :: Selector -> Interpreter ()
 handleSend s = do
     topElement <- top
-    case topElement of
-        Just value -> case value of
-            SelfV -> do
-                pop
-                push SelfV
-            Method (ObjData _ num vmt) -> do
-                pop
-                case selectorTable vmt s of
-                    Just method -> do
-                        replicateM_ num pop
-                        push method
-                    Nothing -> error "Method doesn\'t exist"
-        Nothing -> error "empty stack"
+    let Object (ObjectImpl name num vmt) = fromMaybe (error "Top element isn\'t type Method") $ topElement
+    pop
+
+    let method = fromMaybe (error "Method doesn\'t exist") $ selectorTable vmt s
+    replicateM_ num pop
+    push method
 
 -- TODO: Determine what result to push and where it's located
--- Find selector and send selector to self on top of stack
-{-
-handleSelfSend :: Selector -> Interpreter ()
-hanldeSelfSend s = do
-    -- selector <- selectorTable s
-    topElement <- top
-    case topElement of
-        Just value -> do
-            pop
-            push SelfV -- TODO: not SelfV but needs to be result
-        Nothing -> error "empty stack"
--}
+--handleSelfSend :: Selector -> Interpreter ()
+--hanldeSelfSend s = do
+--    topElement <- top
+--    let SelfV = fromMaybe (error "Type")
+--    pop
+
+--    case topElement of
+--        Just value -> do
+--            pop
+--            --push SelfV -- TODO: not SelfV but needs to be result
+--            case selectorTable vmt s of
+--                Just _ -> do
+--                    replicateM_ num pop
+--                    push _
+--        Nothing -> error "empty stack"
 
 handleInstruction :: Instr -> Interpreter ()
 handleInstruction instr =
@@ -97,4 +99,5 @@ handleInstruction instr =
         Self -> handleSelf
         Literal v -> handleLiteral v
         Send s -> handleSend s
+        --SelfSend s -> handleSelfSend s
         _ -> error "not implemented"
