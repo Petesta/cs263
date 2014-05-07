@@ -21,9 +21,7 @@ type VMT = M.Map Selector (Maybe Value)
 
 -- Operand Stack
 data InterpState   = InterpState [Value] ObjectImpl
---type InterpState   = [Value]
 type Interpreter a = State InterpState a
--- go to inter state
 
 instance Eq Selector where
     (Selector s1) == (Selector s2) = s1 == s2
@@ -31,6 +29,7 @@ instance Eq Selector where
 instance Ord Selector where
     compare (Selector s1) (Selector s2) = compare s1 s2
 
+-- Peek on the operand stack
 top :: Interpreter (Maybe Value)
 top = do
   InterpState stack objImpl <- get
@@ -39,6 +38,7 @@ top = do
         (top:_) -> Just top
   return result
 
+-- Pop Value from operand stack
 pop :: Interpreter (Maybe Value)
 pop = do
     InterpState stack objImpl <- get
@@ -48,12 +48,14 @@ pop = do
     put $ InterpState tail objImpl
     return result
 
+-- Push Value onto operand stack
 push :: Value -> Interpreter ()
 push v = do
     InterpState stack objImpl <- get
     put $ InterpState (v:stack) objImpl
     -- stack %= (v:)
 
+-- Find the correct method in the map
 selectorTable :: M.Map Selector (Maybe Value) -> Selector -> Maybe Value
 selectorTable m s = fromMaybe (error "Method doesn\'t exist") $ M.lookup s m
 
@@ -65,33 +67,28 @@ handleSelf = push SelfV
 handleLiteral :: Value -> Interpreter ()
 handleLiteral v = push v
 
--- TODO: send consumes the top of the stack and invokes a method (aka message) on it.
 handleSend :: Selector -> Interpreter ()
 handleSend s = do
     topElement <- top
     let Object (ObjectImpl name num vmt) = fromMaybe (error "Top element isn\'t type Method") $ topElement
     pop
-
+    --
     let method = fromMaybe (error "Method doesn\'t exist") $ selectorTable vmt s
     replicateM_ num pop
+    -- TODO: call method and whatever it returns, push that value
     push method
 
--- TODO: Determine what result to push and where it's located
---handleSelfSend :: Selector -> Interpreter ()
---hanldeSelfSend s = do
---    topElement <- top
---    let SelfV = fromMaybe (error "Type")
---    pop
+handleSelfSend :: Selector -> Interpreter ()
+handleSelfSend s = do 
+    InterpState stack objImpl <- get
+    topElement <- top
+    pop
 
---    case topElement of
---        Just value -> do
---            pop
---            --push SelfV -- TODO: not SelfV but needs to be result
---            case selectorTable vmt s of
---                Just _ -> do
---                    replicateM_ num pop
---                    push _
---        Nothing -> error "empty stack"
+    let ObjectImpl methodName num vmt = objImpl
+    let method = fromMaybe (error "Method doesn\'t exist") $ selectorTable vmt s
+    replicateM_ num pop
+    -- TODO: call method and whatever it returns, push that value
+    push method
 
 handleInstruction :: Instr -> Interpreter ()
 handleInstruction instr =
@@ -99,5 +96,5 @@ handleInstruction instr =
         Self -> handleSelf
         Literal v -> handleLiteral v
         Send s -> handleSend s
-        --SelfSend s -> handleSelfSend s
+        SelfSend s -> handleSelfSend s
         _ -> error "not implemented"
